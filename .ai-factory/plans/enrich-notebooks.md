@@ -211,6 +211,38 @@
 
 ---
 
+### Фаза 7: Аудит и доработка enrich
+
+#### 7.1 — Верификация enrich: проверить все 15 ноутбуков
+
+- [x] Проверить, что требования enrich выполнены для каждого ноутбука:
+  - Комментарии в каждой code-ячейке
+  - Markdown-ячейки с теорией согласно спецификации задач 2.1–6.3
+  - LaTeX-формулы (где указано в задаче)
+  - Ссылки на статьи/документацию
+  - Секция "Выводы" в конце каждого ноутбука
+
+Файлы: `notebooks/*.ipynb`
+
+#### 7.2 — Добавить недостающий контент: инициализация весов (Xavier, Kaiming) в 03
+
+- [x] Добавить markdown-ячейку "Инициализация весов: Xavier, Kaiming, зачем это" после ячейки "Почему нелинейности критичны" в `notebooks/03_linear_layers_and_activations.ipynb`
+
+Файл: `notebooks/03_linear_layers_and_activations.ipynb`
+
+#### 7.3 — Добавить ссылки на статьи в ноутбуки без ссылок
+
+- [x] Добавить ссылки на соответствующие статьи в ноутбуки 02, 03, 04, 05, 08, 09, 10, 12, 14, 15:
+  - 04, 05, 08, 09: "Attention is All You Need" (arxiv.org/abs/1706.03762)
+  - 10: Noam scheduler, AdamW paper
+  - 12: GPT paper (Radford et al.), top-k/top-p sampling papers
+  - 14: HuggingFace documentation links
+  - 02, 03: PyTorch documentation links
+
+Файлы: `notebooks/*.ipynb`
+
+---
+
 ## Commit Plan
 
 Проект не использует git. Изменения сохраняются напрямую.

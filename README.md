@@ -39,6 +39,8 @@
 | 14 | `14_huggingface_transformers.ipynb` | HuggingFace: BERT fine-tuning, GPT-2 |
 | 15 | `15_final_end_to_end.ipynb` | Сквозной пример + сравнение с BERT |
 
+> 📖 Все ноутбуки содержат подробные комментарии в коде, теоретические markdown-ячейки, LaTeX-формулы и ссылки на оригинальные статьи для самостоятельного изучения.
+
 ## Установка
 
 ```bash
