@@ -1,0 +1,260 @@
+import json
+
+path = r'D:\OpenCodeNLLM\OpenCode\Transformer_Notebooks\transformer_learning\notebooks\13_attention_visualization.ipynb'
+with open(path, 'r', encoding='utf-8') as f:
+    nb = json.load(f)
+
+cells = nb['cells']
+
+for i, cell in enumerate(cells):
+    if cell['cell_type'] != 'code':
+        continue
+
+    if i == 1:  # imports — already done
+        continue
+
+    new_lines = None
+
+    if i == 3:  # class definitions
+        new_lines = [
+            "# AttentionCapture: класс-коллектор для сбора карт внимания через forward-хуки",
+            "# Хуки перехватывают промежуточные вычисления без изменения исходной модели",
+            "class AttentionCapture:",
+            "    def __init__(self):",
+            "        self.attentions = []  # накапливаем attention матрицы",
+            "",
+            "    def hook_fn(self, module, input, output):",
+            "        # Если модуль возвращает (output, attn) — берём attn, иначе None",
+            "        if isinstance(output, tuple):",
+            "            self.attentions.append(output[1].detach())  # detach() открепляет от графа",
+            "",
+            "",
+            "class MultiHeadAttentionWithHook(nn.Module):",
+            '    """Многоголовое внимание, возвращающее attention weights (не только выход)."""',
+            "    def __init__(self, d_model, n_heads, dropout=0.1):",
+            "        super().__init__()",
+            "        # Размерность одной головы: d_model // n_heads",
+            "        self.d_k = d_model // n_heads",
+            "        # Четыре проекционные матрицы: Q, K, V и выходная W_O",
+            "        self.W_Q = nn.Linear(d_model, d_model, bias=False)",
+            "        self.W_K = nn.Linear(d_model, d_model, bias=False)",
+            "        self.W_V = nn.Linear(d_model, d_model, bias=False)",
+            "        self.W_O = nn.Linear(d_model, d_model, bias=False)",
+            "        self.dropout = nn.Dropout(dropout)",
+            "        self.n_heads = n_heads",
+            "",
+            "    def forward(self, Q, K, V, mask=None, return_attn=True):",
+            "        batch = Q.size(0)",
+            "        # Линейная проекция Q, K, V + разделение на n_heads голов",
+            "        # view: (batch, seq, d_model) -> (batch, seq, n_heads, d_k)",
+            "        # transpose: (batch, seq, n_heads, d_k) -> (batch, n_heads, seq, d_k)",
+            "        Q = self.W_Q(Q).view(batch, -1, self.n_heads, self.d_k).transpose(1, 2)",
+            "        K = self.W_K(K).view(batch, -1, self.n_heads, self.d_k).transpose(1, 2)",
+            "        V = self.W_V(V).view(batch, -1, self.n_heads, self.d_k).transpose(1, 2)",
+            "        # Scaled Dot-Product: Q @ K^T / sqrt(d_k)",
+            "        scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.d_k)",
+            "        if mask is not None:",
+            "            scores = scores.masked_fill(mask == 0, float('-inf'))  # -inf -> softmax даёт 0",
+            "        attn = self.dropout(F.softmax(scores, dim=-1))  # нормализация по ключам",
+            "        if return_attn:",
+            "            # Конкатенация голов: (b, n_heads, seq, d_k) -> (b, seq, d_model)",
+            "            output = torch.matmul(attn, V).transpose(1, 2).contiguous().view(batch, -1, self.W_O.out_features)",
+            "            return self.W_O(output), attn  # возвращаем и выход, и веса внимания",
+            "        else:",
+            "            return self.W_O(torch.matmul(attn, V).transpose(1, 2).contiguous().view(batch, -1, self.W_O.out_features))",
+            "",
+            "",
+            "class EncoderBlock(nn.Module):",
+            '    """Блок энкодера: Self-Attention -> FFN с Pre-Norm (LayerNorm до подуровня)."""',
+            "    def __init__(self, d_model, n_heads, dropout=0.1):",
+            "        super().__init__()",
+            "        self.attention = MultiHeadAttentionWithHook(d_model, n_heads, dropout)",
+            "        # Позиционная FFN: расширение d_model -> 4*d_model -> GELU -> обратно",
+            "        self.ffn = nn.Sequential(",
+            "            nn.Linear(d_model, 4*d_model), nn.GELU(), nn.Dropout(dropout),",
+            "            nn.Linear(4*d_model, d_model), nn.Dropout(dropout)",
+            "        )",
+            "        self.norm1 = nn.LayerNorm(d_model)  # Pre-Norm для attention",
+            "        self.norm2 = nn.LayerNorm(d_model)  # Pre-Norm для FFN",
+            "",
+            "    def forward(self, x, mask=None):",
+            "        # Self-attention с Pre-Norm: нормализация до подуровня",
+            "        attn_out, attn = self.attention(self.norm1(x), self.norm1(x), self.norm1(x), mask)",
+            "        x = x + attn_out  # остаточная связь",
+            "        x = x + self.ffn(self.norm2(x))  # FFN + остаточная связь",
+            "        return x, attn",
+            "",
+            "",
+            "class EncoderWithHooks(nn.Module):",
+            '    """Полный энкодер — сохраняет attention weights всех слоёв."""',
+            "    def __init__(self, vocab_size, d_model=32, n_heads=4, num_layers=4, max_len=50, dropout=0.1):",
+            "        super().__init__()",
+            "        self.embedding = nn.Embedding(vocab_size, d_model)",
+            "        # Синусоидальные позиционные кодирования (не обучаются)",
+            "        pe = torch.zeros(max_len, d_model)",
+            "        position = torch.arange(0, max_len).float().unsqueeze(1)  # (max_len, 1)",
+            "        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))",
+            "        pe[:, 0::2] = torch.sin(position * div_term)  # чётные позиции — синус",
+            "        pe[:, 1::2] = torch.cos(position * div_term)  # нечётные — косинус",
+            "        self.register_buffer('pe', pe.unsqueeze(0))  # buffer (не параметр)",
+            "        self.layers = nn.ModuleList([EncoderBlock(d_model, n_heads, dropout) for _ in range(num_layers)])",
+            "",
+            "    def forward(self, x, mask=None):",
+            "        # Эмбеддинг * sqrt(d_model) + позиционное кодирование",
+            "        x = self.embedding(x) * math.sqrt(self.embedding.embedding_dim) + self.pe[:, :x.size(1), :]",
+            "        all_attentions = []",
+            "        for layer in self.layers:",
+            "            x, attn = layer(x, mask)",
+            "            all_attentions.append(attn.detach())  # собираем внимание всех слоёв",
+            "        return x, all_attentions",
+            "",
+        ]
+
+    elif i == 4:  # run model
+        new_lines = [
+            "# Создаём энкодер: 20 токенов, d_model=32, 4 головы, 4 слоя",
+            "enc = EncoderWithHooks(vocab_size=20, d_model=32, n_heads=4, num_layers=4)",
+            "input_ids = torch.randint(3, 20, (1, 12))  # случайный батч: 1 пример, 12 токенов",
+            "output, all_attentions = enc(input_ids)  # forward pass — собираем attention",
+            "",
+            'print(f"Number of layers with attention: {len(all_attentions)}")',
+            'print(f"Per-layer attention shape: {all_attentions[0].shape}")',
+            'print(f"  (batch, n_heads, seq_len, seq_len)")',
+            "",
+        ]
+
+    elif i == 6:  # heatmap
+        new_lines = [
+            "# Визуализация attention weights: тепловые карты для каждой головы каждого слоя",
+            "n_layers = len(all_attentions)",
+            "n_heads = all_attentions[0].size(1)",
+            "",
+            "# Сетка subplots: строки = слои, столбцы = головы",
+            "fig, axes = plt.subplots(n_layers, n_heads, figsize=(4*n_heads, 4*n_layers))",
+            "for layer_idx in range(n_layers):",
+            "    for head_idx in range(n_heads):",
+            "        ax = axes[layer_idx, head_idx]",
+            "        # Тепловая карта: чем синее, тем выше вес внимания",
+            "        im = ax.imshow(all_attentions[layer_idx][0, head_idx].detach().cpu().numpy(), cmap='Blues', vmin=0, vmax=1)",
+            "        if layer_idx == 0:",
+            "            ax.set_title(f'Head {head_idx+1}')  # заголовки только в первом ряду",
+            "        if head_idx == 0:",
+            "            ax.set_ylabel(f'Layer {layer_idx+1}')  # подписи слоёв слева",
+            "        plt.colorbar(im, ax=ax, fraction=0.046)",
+            "",
+            "plt.suptitle('Attention Patterns by Layer and Head', fontsize=14)",
+            "plt.tight_layout()",
+            "plt.show()",
+            "",
+        ]
+
+    elif i == 8:  # avg attention
+        new_lines = [
+            "# Усреднение attention по всем головам — общий паттерн для каждого слоя",
+            "fig, axes = plt.subplots(2, 2, figsize=(12, 10))",
+            "for i, ax in enumerate(axes.flat):",
+            "    if i < n_layers:",
+            "        # Среднее по головам: (n_heads, seq, seq) -> (seq, seq)",
+            "        avg_attn = all_attentions[i][0].mean(dim=0).detach().cpu().numpy()",
+            "        im = ax.imshow(avg_attn, cmap='Blues', vmin=0, vmax=1)",
+            "        ax.set_title(f'Layer {i+1} (avg across {n_heads} heads)')",
+            "        ax.set_xlabel('Key')",
+            "        ax.set_ylabel('Query')",
+            "        plt.colorbar(im, ax=ax, fraction=0.046)",
+            "plt.suptitle('Average Attention Pattern Per Layer')",
+            "plt.tight_layout()",
+            "plt.show()",
+            "",
+        ]
+
+    elif i == 10:  # attention rollout
+        new_lines = [
+            "# Attention Rollout: перемножаем матрицы внимания всех слоёв",
+            "# Это моделирует полный поток информации через все слои (Abnar & Zuidema, 2020)",
+            "def attention_rollout(attentions, add_residual=True):",
+            '    """',
+            "    Attention Rollout (Abnar & Zuidema, 2020).",
+            "    Агрегирует внимание через все слои, моделируя полный поток информации.",
+            '    """',
+            "    # Усредняем по головам: список (batch, n_heads, seq, seq) -> (batch, seq, seq)",
+            "    avg_attn = [attn.mean(dim=1) for attn in attentions]",
+            "",
+            "    rollout = avg_attn[0]  # начинаем с первого слоя",
+            "    for i in range(1, len(avg_attn)):",
+            "        if add_residual:",
+            "            # Добавляем residual connection: A + I, затем перемножаем",
+            "            rollout = rollout @ (avg_attn[i] + torch.eye(avg_attn[i].size(-1)))",
+            "        else:",
+            "            rollout = rollout @ avg_attn[i]",
+            "",
+            "    return rollout  # (batch, seq_len, seq_len)",
+            "",
+            "",
+            "rollout = attention_rollout(all_attentions)",
+            "",
+            "plt.figure(figsize=(8, 6))",
+            "plt.imshow(rollout[0].detach().cpu().numpy(), cmap='Blues', vmin=0, vmax=1)",
+            "plt.colorbar(label='Rollout attention')",
+            "plt.title('Attention Rollout (aggregated across layers)')",
+            "plt.xlabel('Key')",
+            "plt.ylabel('Query')",
+            "plt.tight_layout()",
+            "plt.show()",
+            "",
+        ]
+
+    elif i == 12:  # comparison
+        new_lines = [
+            "# Сравнение трёх типов внимания на простом примере",
+            "mha = MultiHeadAttentionWithHook(d_model=16, n_heads=2)",
+            "",
+            "# Self-attention (двунаправленное): Q = K = V — один и тот же вход",
+            "x = torch.randn(1, 8, 16)",
+            "out_sa, attn_sa = mha(x, x, x)",
+            "",
+            "# Masked self-attention (каузальное): запрещён взгляд в будущее",
+            "seq_len = 8",
+            "causal = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool()  # верхний треугольник",
+            "out_msa, attn_msa = mha(x, x, x, mask=~causal)  # mask=0 для будущих позиций",
+            "",
+            "# Cross-attention: Q из одной последовательности, K, V из другой",
+            "enc_out = torch.randn(1, 10, 16)  # выход энкодера (10 токенов)",
+            "out_ca, attn_ca = mha(x, enc_out, enc_out)  # Q=decoder, K=V=encoder",
+            "",
+            "fig, axes = plt.subplots(1, 3, figsize=(15, 4))",
+            "types = [",
+            "    ('Self-Attention', attn_sa),",
+            "    ('Masked Self-Attention', attn_msa),",
+            "    ('Cross-Attention', attn_ca),",
+            "]",
+            "for ax, (name, attn) in zip(axes, types):",
+            "    im = ax.imshow(attn[0, 0].detach().numpy(), cmap='Blues', vmin=0, vmax=1)",
+            "    ax.set_title(name)",
+            "    ax.set_xlabel('Key')",
+            "    ax.set_ylabel('Query')",
+            "    plt.colorbar(im, ax=ax, fraction=0.046)",
+            "plt.tight_layout()",
+            "plt.show()",
+            "",
+        ]
+
+    elif i == 13:  # summary
+        new_lines = [
+            "# Итоговый вывод с перечислением изученных тем",
+            'print("=== Attention Visualization complete ===")',
+            'print("Topics covered:")',
+            'print("  - Attention hooks for weight capture")           # Хуки для захвата attention',
+            'print("  - Per-layer, per-head heatmaps")                  # Тепловые карты по слоям и головам',
+            'print("  - Average attention across heads")               # Усреднение паттернов по головам',
+            'print("  - Attention Rollout aggregation")                 # Агрегация внимания через слои',
+            'print("  - Self-Attention vs Masked vs Cross-Attention")  # Сравнение трёх типов внимания',
+            'print("  - Layer-wise pattern analysis")                  # Анализ эволюции паттернов по слоям',
+            "",
+        ]
+
+    if new_lines is not None:
+        cell['source'] = [l + '\n' for l in new_lines]
+
+with open(path, 'w', encoding='utf-8') as f:
+    json.dump(nb, f, ensure_ascii=False, indent=1)
+print("Notebook 13 done")
